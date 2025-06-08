@@ -19,6 +19,7 @@
     std::atomic<int> clientsServed{0};
     std::atomic<double> totalServiceTime{0.0};  // в секундах
     std::atomic<bool> simulationRunning{true};
+    std::atomic<bool> resetRequested{false};
     mutex intervalsMutex;
     deque<double> timeIntervals;
     mutex queueMutex;
@@ -98,14 +99,19 @@
     std::default_random_engine generator(std::random_device{}());
 
     while (true) {
+        if (resetRequested.load()) {
+            break;
+        }
         if (!simulationRunning.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (resetRequested.load() || !simulationRunning.load()) break;
             continue;
         }
 
         Client client;
         {
             unique_lock<mutex> lock(queueMutex);
+            cv.wait(lock, [] { return !bankQueue.empty() || !bankOpen || resetRequested.load(); });
             if (bankQueue.empty()) {
                 lock.unlock();
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -178,9 +184,12 @@
         std::this_thread::sleep_for(std::chrono::duration<double>(interval));
         auto lastTime = chrono::steady_clock::now();  // замер времени
 
-        while (bankOpen) {
-            double interval = exp_dist(generator); // случайный интервал
+        while (!resetRequested.load() && bankOpen) {
+            if (resetRequested.load()) break;
+            exponential_distribution<double> exp_dist(lambdaRate.load());
+            double interval = exp_dist(generator); //  интервал
             std::this_thread::sleep_for(std::chrono::milliseconds(int(interval * 1000)));
+
             exp_dist = std::exponential_distribution<double>(lambdaRate.load());
             //Расчет реального интервала
             auto now = chrono::steady_clock::now();
@@ -472,64 +481,58 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
                             cv.notify_all();
                         }
                         if (resetButton.getGlobalBounds().contains(mousePos.x, mousePos.y)) {
-                            // Шаг 1: Остановить все потоки
-                            {
-                                lock_guard<mutex> lock(queueMutex);
-                                bankOpen = false; // Говорим потокам завершиться
-                            }
-                            cv.notify_all(); // Будим все потоки
+                            // 1. Устанавливаем флаги для остановки
+                            resetRequested.store(true);
+                            bankOpen = false;
+                            simulationRunning.store(false);
+                            cv.notify_all();  // Будим все потоки
 
-                            // Шаг 2: Дождаться завершения потоков
-                            if (poissonGenerator.joinable()) {
+                            // 2. Ожидаем завершения генератора клиентов
+                            if (simulationStarted && poissonGenerator.joinable()) {
                                 poissonGenerator.join();
                             }
 
+                            // 3. Ожидаем завершения всех воркеров
                             for (auto& worker : workers) {
                                 if (worker.joinable()) {
                                     worker.join();
                                 }
                             }
+                            workers.clear();  // Очищаем вектор потоков
 
-                            // Шаг 3: Очистить векторы потоков
-                            workers.clear();
-
-                            // Шаг 4: Сбросить состояние симуляции
+                            // 4. Сбрасываем данные
                             {
                                 lock_guard<mutex> lock(queueMutex);
-                                bankQueue = queue<Client>(); // Очищаем очередь
+                                bankQueue = queue<Client>();  // Очищаем очередь
                                 processedClients.clear();
-                                bankOpen = true; // Возвращаем в исходное состояние
                             }
 
-                            // Сброс статистики
-                            {
-                                lock_guard<mutex> lock(stats.statsMutex);
-                                stats.reset(); // Сбрасываем всю статистику
-                            }
+                            // 5. Сбрасываем статистику
+                            stats.reset();
+                            clientId = 1;  // Сбрасываем ID клиентов
 
+                            // 6. Очищаем логи
                             {
                                 lock_guard<mutex> lock(logsMutex);
                                 logs.clear();
                                 logs.push_back("Simulation reset. Ready to start again.");
                             }
 
+                            // 7. Визуальный сброс
                             {
-                                lock_guard<mutex> lock(intervalsMutex);
-                                timeIntervals.clear();
-                            }
-
-                            // Шаг 5: Сбросить визуальные элементы
-                            {
-                                lock_guard<mutex> visualLock(visualsMutex);
+                                lock_guard<mutex> lock(visualsMutex);
                                 for (auto& worker : workersVisuals) {
-                                    worker.setFillColor(sf::Color::Yellow); // Возвращаем в "свободен"
+                                    worker.setFillColor(sf::Color::Yellow);
                                 }
                             }
 
-                            // Шаг 6: Сбросить ID клиентов и флаг симуляции
-                            clientId = 1;
+                            // 8. Сбрасываем флаги
+                            resetRequested.store(false);
+                            bankOpen = true;
+                            simulationRunning.store(true);
                             simulationStarted = false;
                         }
+
                     }
                 }
 
@@ -628,12 +631,6 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
         }
         if (poissonGenerator.joinable())
             poissonGenerator.join();
-        for (auto& worker : workers) {
-            if (worker.joinable())
-                worker.join();
-        }
-        if (poissonGenerator.joinable())
-            poissonGenerator.join();
-        statsWindow.close();
+
         return 0;
     }
