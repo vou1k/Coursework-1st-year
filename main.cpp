@@ -24,6 +24,10 @@
     deque<double> timeIntervals;
     mutex queueMutex;
     mutex visualsMutex;
+    // Назначение операций на кассы
+    vector<string> workerSpecialization = {
+        "Deposit", "Withdraw", "Loan", "Inquiry", "Any"
+    };
 
     sf::RectangleShape createButton(float x, float y, float width, float height, sf::Color color) {
         sf::RectangleShape button(sf::Vector2f(width, height));
@@ -65,6 +69,11 @@
         int inquiries = 0;
         double totalServiceTime = 0.0;
         double totalWaitTime = 0.0;
+        // заработок по операциям
+        double depositProfit = 0.0;
+        double withdrawalProfit = 0.0;
+        double loanProfit = 0.0;
+        double inquiryProfit = 0.0;
         mutex statsMutex;
         void reset() {
             lock_guard<mutex> lock(statsMutex);
@@ -75,6 +84,10 @@
             inquiries = 0;
             totalServiceTime = 0.0;
             totalWaitTime = 0.0;
+            depositProfit = 0.0;
+            withdrawalProfit = 0.0;
+            loanProfit = 0.0;
+            inquiryProfit = 0.0;
         }
     };
 
@@ -109,71 +122,107 @@
         }
 
         Client client;
+        bool clientFound = false;
         {
             unique_lock<mutex> lock(queueMutex);
             cv.wait(lock, [] { return !bankQueue.empty() || !bankOpen || resetRequested.load(); });
-            if (bankQueue.empty()) {
-                lock.unlock();
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                continue;
+            if (resetRequested.load() || !bankOpen) break;
+            if (bankQueue.empty()) continue;
+
+            // Поиск подходящего клиента
+            queue<Client> tempQueue;
+            while (!bankQueue.empty()) {
+                Client potential = bankQueue.front();
+                bankQueue.pop();
+
+                if (workerSpecialization[workerId] == "Any" ||
+                    potential.operation == workerSpecialization[workerId]) {
+                    client = potential;
+                    clientFound = true;
+                    break;
+                } else {
+                    tempQueue.push(potential);
+                }
             }
-            client = bankQueue.front();
-            bankQueue.pop();
+
+            // Возвращаем неподходящих клиентов обратно в очередь
+            while (!tempQueue.empty()) {
+                bankQueue.push(tempQueue.front());
+                tempQueue.pop();
+            }
         }
 
-        // Переместить клиента к кассе визуально
-        {
-            lock_guard<mutex> visualLock(visualsMutex);
-            client.shape.setPosition(620 + (workerId % 3) * 100, 200 + (workerId / 3) * 100);
-            visuals[workerId].setFillColor(sf::Color::Blue); // Работает
-        }
+        if (!clientFound) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            } else {
+                // Обработка найденного клиента
+                {
+                    lock_guard<mutex> visualLock(visualsMutex);
+                    client.shape.setPosition(620 + (workerId % 3) * 100, 200 + (workerId / 3) * 100);
+                    visuals[workerId].setFillColor(sf::Color::Blue); // Работает
+                }
 
-        // Лог начала обслуживания
-        {
-            lock_guard<mutex> logLock(logsMutex);
-            logs.push_back("Worker " + to_string(workerId) + " started processing client " +
-                           to_string(client.id) + " - " + client.operation +
-                           " ($" + to_string(client.amount) + ")");
-        }
+                // Лог начала обслуживания
+                {
+                    lock_guard<mutex> logLock(logsMutex);
+                    logs.push_back("Worker " + to_string(workerId+1) + " started processing client " +
+                                 to_string(client.id) + " - " + client.operation +
+                                 " ($" + to_string(client.amount) + ")");
+                }
 
-        // Генерация времени обслуживания и ожидание
-        std::exponential_distribution<double> exp_dist(muRate.load());
-        double serviceTime = exp_dist(generator);
+                // Генерация времени обслуживания и ожидание
+                std::exponential_distribution<double> exp_dist(muRate.load());
+                double serviceTime = exp_dist(generator);
 
-        auto startTime = std::chrono::high_resolution_clock::now();
-        std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(serviceTime * 1000)));
-        auto endTime = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> elapsed = endTime - startTime;
+                auto startTime = std::chrono::high_resolution_clock::now();
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(serviceTime * 1000)));
+                auto endTime = std::chrono::high_resolution_clock::now();
+                std::chrono::duration<double> elapsed = endTime - startTime;
 
-        {
-            lock_guard<mutex> visualLock(visualsMutex);
-            visuals[workerId].setFillColor(sf::Color::Yellow); // Свободен
-        }
+                {
+                    lock_guard<mutex> visualLock(visualsMutex);
+                    visuals[workerId+1].setFillColor(sf::Color::Yellow); // Свободен
+                }
 
-        // Обновление статистики
-        {
-            lock_guard<mutex> statsLock(stats.statsMutex);
-            stats.totalClients++;
-            stats.totalServiceTime += elapsed.count();
-            if (client.operation == "Deposit") stats.deposits++;
-            else if (client.operation == "Withdraw") stats.withdrawals++;
-            else if (client.operation == "Loan") stats.loans++;
-            else if (client.operation == "Inquiry") stats.inquiries++;
-        }
+                // Обновление статистики
+                {
+                    lock_guard<mutex> statsLock(stats.statsMutex);
+                    stats.totalClients++;
+                    stats.totalServiceTime += elapsed.count();
 
-        // Лог завершения
-        {
-            lock_guard<mutex> logLock(logsMutex);
-            logs.push_back("Worker " + to_string(workerId) + " finished client " +
-                           to_string(client.id) + " in " + to_string(elapsed.count()) + " sec");
-        }
+                    if (client.operation == "Deposit") {
+                        stats.deposits++;
+                        stats.depositProfit += client.amount * 0.01; // 1% комиссия за депозит
+                    }
+                    else if (client.operation == "Withdraw") {
+                        stats.withdrawals++;
+                        stats.withdrawalProfit += client.amount * 0.02; // 2% комиссия за снятие
+                    }
+                    else if (client.operation == "Loan") {
+                        stats.loans++;
+                        stats.loanProfit += client.amount * 0.05; // 5% комиссия за кредит
+                    }
+                    else if (client.operation == "Inquiry") {
+                        stats.inquiries++;
+                        stats.inquiryProfit += 5.0; // Фиксированная плата за консультацию
+                    }
+                }
 
-        {
-            lock_guard<mutex> lock(queueMutex);
-            processedClients.push_back(client);
+                // Лог завершения
+                {
+                    lock_guard<mutex> logLock(logsMutex);
+                    logs.push_back("Worker " + to_string(workerId) + " finished client " +
+                                 to_string(client.id) + " in " + to_string(elapsed.count()) + " sec");
+                }
+
+                {
+                    lock_guard<mutex> lock(queueMutex);
+                    processedClients.push_back(client);
+                }
+            }
         }
     }
-}
+
 
     void poissonClientGenerator(int& clientId, mutex& logsMutex, vector<string>& logs,
                               deque<double>& timeIntervals, mutex& intervalsMutex) {
@@ -246,10 +295,19 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
 
         addText("=== Bank Statistics ===");
         addText("Total clients: " + to_string(stats.totalClients));
-        addText("Deposits: " + to_string(stats.deposits));
-        addText("Withdrawals: " + to_string(stats.withdrawals));
-        addText("Loans: " + to_string(stats.loans));
-        addText("Inquiries: " + to_string(stats.inquiries));
+        addText("Deposits: " + to_string(stats.deposits) +
+               " ($" + to_string(stats.depositProfit).substr(0, 5) + ")");
+        addText("Withdrawals: " + to_string(stats.withdrawals) +
+               " ($" + to_string(stats.withdrawalProfit).substr(0, 5) + ")");
+        addText("Loans: " + to_string(stats.loans) +
+               " ($" + to_string(stats.loanProfit).substr(0, 5) + ")");
+        addText("Inquiries: " + to_string(stats.inquiries) +
+               " ($" + to_string(stats.inquiryProfit).substr(0, 5) + ")");
+
+        double totalProfit = stats.depositProfit + stats.withdrawalProfit +
+                            stats.loanProfit + stats.inquiryProfit;
+        addText("----------------------");
+        addText("Total profit: $" + to_string(totalProfit).substr(0, 6));
 
         double avgService = stats.totalClients > 0 ? stats.totalServiceTime / stats.totalClients : 0;
         double avgWait = stats.totalClients > 0 ? stats.totalWaitTime / stats.totalClients : 0;
@@ -269,6 +327,7 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
         vector<string> logs;
         mutex logsMutex;
         bool simulationStarted = false;
+
         thread poissonGenerator;
         sf::RenderWindow window(sf::VideoMode(1000, 500), "Bank Simulator");
         sf::Font font;
@@ -408,6 +467,18 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
                         if (startButton.getGlobalBounds().contains(mousePos.x, mousePos.y)) {
                             if (!simulationStarted) {
                                 simulationStarted = true;
+                                bankOpen = true;
+                                resetRequested = false;
+                                // Убедитесь, что предыдущие потоки завершены
+                                if (poissonGenerator.joinable()) {
+                                    poissonGenerator.join();
+                                }
+                                for (auto& worker : workers) {
+                                    if (worker.joinable()) {
+                                        worker.join();
+                                    }
+                                }
+                                workers.clear();
 
                                 poissonGenerator = thread(poissonClientGenerator, ref(clientId), ref(logsMutex),
                                                           ref(logs), ref(timeIntervals), ref(intervalsMutex));
@@ -416,6 +487,7 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
                                     workers.emplace_back(processClient, i, ref(logs), ref(logsMutex),
                                                          ref(workersVisuals), ref(visualsMutex));
                                 }
+                                simulationStarted = true;
 
                                 {
                                     lock_guard<mutex> logLock(logsMutex);
@@ -606,8 +678,14 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
 
             {
                 lock_guard<mutex> visualLock(visualsMutex);
-                for (const auto& worker : workersVisuals) {
-                    window.draw(worker);
+                // Отрисовка работников и их специализаций
+                for (int i = 0; i < workersVisuals.size(); ++i) {
+                    window.draw(workersVisuals[i]);
+
+                    sf::Text label("Cashier " + to_string(i+1) + "\n(" + workerSpecialization[i] + ")", font, 14);
+                    label.setFillColor(sf::Color(200, 200, 255));
+                    label.setPosition(workersVisuals[i].getPosition().x, workersVisuals[i].getPosition().y - 40);
+                    window.draw(label);
                 }
             }
             // Обновление и отрисовка индикатора очереди
