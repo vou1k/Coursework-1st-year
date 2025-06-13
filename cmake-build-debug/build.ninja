@@ -52,7 +52,7 @@ build cmake_object_order_depends_target_HELLOSFML: phony || .
 build CMakeFiles/HELLOSFML.dir/main.cpp.obj: CXX_COMPILER__HELLOSFML_unscanned_Debug C$:/Users/1/CLionProjects/HELLOSFML/main.cpp || cmake_object_order_depends_target_HELLOSFML
   DEFINES = -DSFML_STATIC
   DEP_FILE = CMakeFiles\HELLOSFML.dir\main.cpp.obj.d
-  FLAGS = -g -fdiagnostics-color=always
+  FLAGS = -g -std=gnu++1z -fdiagnostics-color=always
   INCLUDES = -isystem C:/sfml/include
   OBJECT_DIR = CMakeFiles\HELLOSFML.dir
   OBJECT_FILE_DIR = CMakeFiles\HELLOSFML.dir
@@ -67,6 +67,7 @@ build CMakeFiles/HELLOSFML.dir/main.cpp.obj: CXX_COMPILER__HELLOSFML_unscanned_D
 
 build HELLOSFML.exe: CXX_EXECUTABLE_LINKER__HELLOSFML_Debug CMakeFiles/HELLOSFML.dir/main.cpp.obj | C$:/sfml/lib/libsfml-system-s-d.a C$:/sfml/lib/libsfml-window-s-d.a C$:/sfml/lib/libsfml-graphics-s-d.a C$:/sfml/lib/libsfml-audio-s-d.a C$:/sfml/lib/libsfml-window-s-d.a C$:/sfml/lib/libfreetype.a C$:/sfml/lib/libsfml-system-s-d.a C$:/sfml/lib/libopenal32.a C$:/sfml/lib/libvorbisfile.a C$:/sfml/lib/libvorbisenc.a C$:/sfml/lib/libvorbis.a C$:/sfml/lib/libogg.a C$:/sfml/lib/libFLAC.a
   FLAGS = -g
+  LINK_FLAGS = -static -static-libgcc  -mwindows
   LINK_LIBRARIES = C:/sfml/lib/libsfml-system-s-d.a  C:/sfml/lib/libsfml-window-s-d.a  C:/sfml/lib/libsfml-graphics-s-d.a  C:/sfml/lib/libsfml-audio-s-d.a  C:/sfml/lib/libsfml-window-s-d.a  -lgdi32  -lOpenGL32  C:/sfml/lib/libfreetype.a  C:/sfml/lib/libsfml-system-s-d.a  -lwinmm  C:/sfml/lib/libopenal32.a  C:/sfml/lib/libvorbisfile.a  C:/sfml/lib/libvorbisenc.a  C:/sfml/lib/libvorbis.a  C:/sfml/lib/libogg.a  C:/sfml/lib/libFLAC.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = CMakeFiles\HELLOSFML.dir
   POST_BUILD = cd .

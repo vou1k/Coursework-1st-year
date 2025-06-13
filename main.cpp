@@ -20,6 +20,8 @@
     std::atomic<double> totalServiceTime{0.0};  // в секундах
     std::atomic<bool> simulationRunning{true};
     std::atomic<bool> resetRequested{false};
+    const int numWorkers = 5;
+
     mutex intervalsMutex;
     deque<double> timeIntervals;
     mutex queueMutex;
@@ -321,7 +323,7 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
     int main() {
         srand(time(0));
         int clientId = 1;
-        const int numWorkers = 5;
+
         vector<sf::RectangleShape> workersVisuals;
         vector<thread> workers;
         vector<string> logs;
