@@ -20,7 +20,8 @@
     std::atomic<double> totalServiceTime{0.0};  // в секундах
     std::atomic<bool> simulationRunning{true};
     std::atomic<bool> resetRequested{false};
-    const int numWorkers = 5;
+    //const int numWorkers = 5;
+    std::atomic<int> numWorkers(3); // Начальное значение - 3 кассы
 
     mutex intervalsMutex;
     deque<double> timeIntervals;
@@ -319,11 +320,117 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
 
         statsWindow.display();
     }
+    int showWorkerSelectionWindow() {
+    sf::RenderWindow selectionWindow(sf::VideoMode(600, 300), "Select Number of Cashiers");
+    sf::Font font;
+    if (!font.loadFromFile("C:/Users/1/CLionProjects/HELLOSFML/fonts/arial/arial.ttf")) {
+        return 3; // значение по умолчанию
+    }
 
+    int selected = 3;
+    bool confirmed = false;
+
+    // Создаем кнопки выбора (1-10)
+    vector<sf::RectangleShape> buttons;
+    vector<sf::Text> buttonTexts;
+
+    // Первая строка кнопок (1-5)
+    for (int i = 0; i < 5; i++) {
+        sf::RectangleShape button(sf::Vector2f(50, 40));
+        button.setPosition(50 + i * 110, 100);
+        button.setFillColor(i == 2 ? sf::Color::Green : sf::Color::White);
+        buttons.push_back(button);
+
+        sf::Text text(to_string(i+1), font, 20);
+        text.setPosition(65 + i * 110, 105);
+        text.setFillColor(sf::Color::Black);
+        buttonTexts.push_back(text);
+    }
+
+    // Вторая строка кнопок (6-10)
+    for (int i = 5; i < 10; i++) {
+        sf::RectangleShape button(sf::Vector2f(50, 40));
+        button.setPosition(50 + (i-5) * 110, 160);
+        button.setFillColor(sf::Color::White);
+        buttons.push_back(button);
+
+        sf::Text text(to_string(i+1), font, 20);
+        text.setPosition(65 + (i-5) * 110, 165);
+        text.setFillColor(sf::Color::Black);
+        buttonTexts.push_back(text);
+    }
+
+    // Кнопка OK
+    sf::RectangleShape okButton(sf::Vector2f(100, 50));
+    okButton.setPosition(250, 220);
+    okButton.setFillColor(sf::Color(0, 250, 154));
+    sf::Text okText("OK", font, 24);
+    okText.setPosition(280, 230);
+    okText.setFillColor(sf::Color::White);
+
+    sf::Text title("Select number of cashiers (1-10):", font, 24);
+    title.setPosition(50, 30);
+    title.setFillColor(sf::Color::White);
+
+    while (selectionWindow.isOpen()) {
+        sf::Event event;
+        while (selectionWindow.pollEvent(event)) {
+            if (event.type == sf::Event::Closed) {
+                selectionWindow.close();
+                return 3;
+            }
+
+            if (event.type == sf::Event::MouseButtonPressed) {
+                if (event.mouseButton.button == sf::Mouse::Left) {
+                    sf::Vector2f mousePos = selectionWindow.mapPixelToCoords(
+                        sf::Vector2i(event.mouseButton.x, event.mouseButton.y));
+
+                    // Проверяем нажатие на кнопки с цифрами
+                    for (int i = 0; i < buttons.size(); i++) {
+                        if (buttons[i].getGlobalBounds().contains(mousePos)) {
+                            selected = i + 1;
+                            // Обновляем цвета всех кнопок
+                            for (int j = 0; j < buttons.size(); j++) {
+                                buttons[j].setFillColor(j == i ? sf::Color::Green : sf::Color::White);
+                            }
+                            break;
+                        }
+                    }
+
+                    // Проверяем нажатие на кнопку OK
+                    if (okButton.getGlobalBounds().contains(mousePos)) {
+                        selectionWindow.close();
+                    }
+                }
+            }
+        }
+
+        selectionWindow.clear(sf::Color(50, 50, 70));
+        selectionWindow.draw(title);
+        for (auto& btn : buttons) selectionWindow.draw(btn);
+        for (auto& text : buttonTexts) selectionWindow.draw(text);
+        selectionWindow.draw(okButton);
+        selectionWindow.draw(okText);
+        selectionWindow.display();
+    }
+
+    return selected;
+}
     int main() {
         srand(time(0));
         int clientId = 1;
+        // Показываем окно выбора количества касс
+        numWorkers = showWorkerSelectionWindow();
 
+        // Инициализируем специализацию касс
+        workerSpecialization.clear();
+        for (int i = 0; i < numWorkers; ++i) {
+            if (i == 0) workerSpecialization.push_back("Deposit");
+            else if (i == 1) workerSpecialization.push_back("Withdraw");
+            else if (i == 2) workerSpecialization.push_back("Loan");
+            else if (i == 3) workerSpecialization.push_back("Inquiry");
+            else workerSpecialization.push_back("Any"); // Остальные кассы универсальные
+        }
         vector<sf::RectangleShape> workersVisuals;
         vector<thread> workers;
         vector<string> logs;
@@ -331,7 +438,7 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
         bool simulationStarted = false;
 
         thread poissonGenerator;
-        sf::RenderWindow window(sf::VideoMode(1000, 500), "Bank Simulator");
+        sf::RenderWindow window(sf::VideoMode(1300, 700), "Bank Simulator");
         sf::Font font;
         if (!font.loadFromFile("C:/Users/1/CLionProjects/HELLOSFML/fonts/arial/arial.ttf")) {
             cerr << "Error loading font!" << endl;
@@ -341,16 +448,17 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
         const float LOG_START_Y = 15.f;    // Начальная позиция Y для первого лога
         const float LINE_HEIGHT = 20.f;    // Высота строки лога
 
-        for (int i = 0; i < numWorkers; ++i) {
+        workersVisuals.clear();
+        int currentWorkers = numWorkers.load();
+        for (int i = 0; i < currentWorkers; ++i) {
             sf::RectangleShape worker(sf::Vector2f(40, 40));
             worker.setFillColor(sf::Color::Yellow);
-            sf::Text label("Cashier " + to_string(i+1), font, 16);
-            label.setFillColor(sf::Color::White);
-            label.setPosition(worker.getPosition().x, worker.getPosition().y - 20);
-            window.draw(label);
-            worker.setPosition(620 + (i % 3) * 100, 100 + (i / 3) * 100); // 3 в строке, остальные ниже
+            // Позиционируем кассы - максимум 5 в ряд
+            int cols = currentWorkers <= 5 ? currentWorkers : 5;
+            worker.setPosition(750 + (i % cols) * 100, 100 + (i / cols) * 120);
             workersVisuals.push_back(worker);
         }
+
         sf::RectangleShape logBackground(sf::Vector2f(590, 450));
         logBackground.setPosition(5, 5);
         logBackground.setFillColor(sf::Color(30, 30, 30)); //
@@ -361,58 +469,59 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
         logText.setFillColor(sf::Color::White);
 
         // Левый — для логов
-        sf::View logView(sf::FloatRect(0, 0, 600, 500));
-        logView.setViewport(sf::FloatRect(0.f, 0.f, 0.6f, 1.f));  // 60% ширины
+        sf::View logView(sf::FloatRect(0, 0, 800, 700));
+        logView.setViewport(sf::FloatRect(0.f, 0.f, 0.615f, 1.f));  // 60% ширины
 
         // Правый — для визуальной части
-        sf::View visualView(sf::FloatRect(0, 0, 400, 500));
-        visualView.setViewport(sf::FloatRect(0.6f, 0.f, 0.4f, 1.f));  // 40% ширины
+        sf::View visualView(sf::FloatRect(0, 0, 500, 700));
+        visualView.setViewport(sf::FloatRect(0.615f, 0.f, 0.385f, 1.f));
         // Кнопки
-        auto startButton = createButton(620, 400, 120, 40, sf::Color::Green);
-        auto startText = createText(font, "Start", 650, 410, 18, sf::Color::Black);
+        auto startButton = createButton(850, 550, 120, 40, sf::Color::Green);
+        auto startText = createText(font, "Start", 880, 560, 18, sf::Color::Black);
 
         sf::RectangleShape stopButton(sf::Vector2f(120, 40));
-        stopButton.setPosition(770, 400);
+        stopButton.setPosition(1000, 550);
         stopButton.setFillColor(sf::Color::Red);
-        auto increaseMuButton = createButton(790, 340, 40, 30, sf::Color::White);
-        sf::Text increaseMuText = createText(font, "+", 805, 340, 20, sf::Color::Black);
-        sf::Text muText = createText(font, "mu = 0.5", 790, 310, 20, sf::Color::Cyan);
-        auto decreaseMuButton = createButton(840, 340, 40, 30, sf::Color::White);
-        sf::Text decreaseMuText = createText(font, "-", 855, 340, 20, sf::Color::Black);
-
-        sf::RectangleShape increaseLambdaButton = createButton(620, 340, 40, 30, sf::Color::White);
-        sf::Text increaseText = createText(font, "+", 635, 340, 20, sf::Color::Black);
-        sf::Text lambdaText = createText(font, "lambda = 1.0", 620, 310, 20, sf::Color::Magenta);
-        sf::RectangleShape decreaseLambdaButton = createButton(670, 340, 40, 30, sf::Color::White);
-        sf::Text decreaseText = createText(font, "-", 685, 340, 20, sf::Color::Black);
+        // Кнопки управления mu
+        auto increaseMuButton = createButton(850, 500, 40, 30, sf::Color::White);
+        sf::Text increaseMuText = createText(font, "+", 865, 500, 20, sf::Color::Black);
+        sf::Text muText = createText(font, "mu = 0.5", 850, 470, 20, sf::Color::Cyan);
+        auto decreaseMuButton = createButton(900, 500, 40, 30, sf::Color::White);
+        sf::Text decreaseMuText = createText(font, "-", 915, 500, 20, sf::Color::Black);
+        // Кнопки управления lambda
+        sf::RectangleShape increaseLambdaButton = createButton(700, 500, 40, 30, sf::Color::White);
+        sf::Text increaseText = createText(font, "+", 715, 500, 20, sf::Color::Black);
+        sf::Text lambdaText = createText(font, "lambda = 1.0", 700, 470, 20, sf::Color::Magenta);
+        sf::RectangleShape decreaseLambdaButton = createButton(750, 500, 40, 30, sf::Color::White);
+        sf::Text decreaseText = createText(font, "-", 765, 500, 20, sf::Color::Black);
 
         sf::Text stopText("Stop", font, 18);
-        stopText.setPosition(800, 410);
+        stopText.setPosition(1030, 560);
         stopText.setFillColor(sf::Color::Black);
         sf::RectangleShape timeline(sf::Vector2f(200, 10));
         timeline.setPosition(550, 380);
         timeline.setFillColor(sf::Color::Blue);
 
         sf::RectangleShape resetButton(sf::Vector2f(120, 40));
-        resetButton.setPosition(770, 450);  // Под  Stop
+        resetButton.setPosition(1000, 600);  // Под  Stop
         resetButton.setFillColor(sf::Color(100, 100, 255));
         sf::Text resetText("Reset", font, 18);
-        resetText.setPosition(800, 460);
+        resetText.setPosition(1030, 610);
         resetText.setFillColor(sf::Color::White);
 
         // Индикатор очереди - фон
         sf::RectangleShape queueIndicatorBg(sf::Vector2f(120, 30));
-        queueIndicatorBg.setPosition(620, 450);  // Под кнопками
+        queueIndicatorBg.setPosition(850, 600);  // Под кнопками
         queueIndicatorBg.setFillColor(sf::Color(50, 50, 50));
         queueIndicatorBg.setOutlineThickness(1);
         queueIndicatorBg.setOutlineColor(sf::Color::White);
 
         // Текст индикатора очереди
         sf::Text queueSizeText("Queue: 0", font, 18);
-        queueSizeText.setPosition(630, 453);  // Смещение внутри фона
+        queueSizeText.setPosition(860, 603);  // Смещение внутри фона
         queueSizeText.setFillColor(sf::Color::White);
         sf::Text statsText("", font, 16);
-        statsText.setPosition(550, 360);
+        statsText.setPosition(700, 400);
         statsText.setFillColor(sf::Color::White);
         lambdaText.setString("lambda = " + std::to_string(lambdaRate.load()).substr(0, 4));
         {
@@ -443,8 +552,8 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
         // Создаем вид (View) для текстовой области
         sf::View textView(sf::FloatRect(10, 10, 580, 330)); // Область текста
         textView.setViewport(sf::FloatRect(0.0f, 0.0f, 0.6f, 0.9f)); // 80% окна для текста
-        sf::RectangleShape separator(sf::Vector2f(2, 500));
-        separator.setPosition(600, 0); // граница между логами и визуализацией
+        sf::RectangleShape separator(sf::Vector2f(2, 700));
+        separator.setPosition(800, 0); // граница между логами и визуализацией
         separator.setFillColor(sf::Color::White);
         sf::RenderWindow statsWindow(sf::VideoMode(400, 300), "Bank Statistics");
         statsWindow.setPosition(sf::Vector2i(1000, 0));
@@ -520,7 +629,7 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
                                 // Запуск потоков сотрудников
                                 for (int i = 0; i < numWorkers; i++) {
                                     workers.emplace_back(processClient, i, ref(logs), ref(logsMutex),
-                                                         ref(workersVisuals), ref(visualsMutex));
+                                                        ref(workersVisuals), ref(visualsMutex));
                                 }
 
                                 {
@@ -583,6 +692,14 @@ void drawStatsWindow(sf::RenderWindow& statsWindow, const Statistics& stats) {
 
                             // 5. Сбрасываем статистику
                             stats.reset();
+                            workerSpecialization.clear();
+                            for (int i = 0; i < numWorkers; ++i) {
+                                if (i == 0) workerSpecialization.push_back("Deposit");
+                                else if (i == 1) workerSpecialization.push_back("Withdraw");
+                                else if (i == 2) workerSpecialization.push_back("Loan");
+                                else if (i == 3) workerSpecialization.push_back("Inquiry");
+                                else workerSpecialization.push_back("Any");
+                            }
                             clientId = 1;  // Сбрасываем ID клиентов
 
                             // 6. Очищаем логи
